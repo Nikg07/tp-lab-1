@@ -190,4 +190,220 @@ void print_incorrect(FILE* output, const char* comand) {
 }
 
 
+// ===== парсинг =====
+
+// целое число
+int pars_valid_int(const char* str) {
+    if (str == NULL || *str == '\0') return 0;
+    if (*str == '-') str++;
+    if (*str == '\0')return 0;
+
+    while (*str) {
+        if (!isdigit(*str))return 0;
+        str++
+    }
+    return 1;
+}
+
+//диапозон
+int diapozon_int(const char* str, int* rez) {
+    if (!pars_valid_int(str))return 0;
+    char* end;
+    long val = strol(str, &end, 10);
+    if (val < -2147483648 || val>2147483647)return 0;
+    *rez = (int)val;
+    return 0;
+}
+
+//двойные ковычки
+char* pars_str(const char* str) {
+    if (str == NULL || *str != '"')return NULL;
+    str++;
+
+    char* rez = (char*)my_malloc(strlen(str) + 1);
+    if (rez == NULL) return NULL;
+
+    int i = 0;
+    while (*str && *str != '"') {
+        if (*str == '\\') {
+            str++;
+            if (*str == '"' || *str == '\\') {
+                rez[i++] = *str;
+                str++;
+            }
+            else {
+                rez[i++] = '\\';
+            }
+        }
+        else {
+            rez[i++] = *str;
+            str++;
+        }
+    }
+
+    if (*str != '"') {
+        my_free(rez);
+        return NULL;
+    }
+    rez[i] = '\0';
+    return rez;
+}
+
+
+//время
+int pars_time(const char* str, Time* t) {
+    if (str == NULL || *str != '\'') return 0;
+    str++;
+
+    int h, m, s;
+    int c = sscanf(str, "%d:%d:%d", &h, &m, &s);
+
+    if (c != 3)return 0;
+    if (h < 0 || h>23 || m < 0 || m>59 || s < 0 || s>59)  return 0;
+
+    while (*str&&* str = '\'')str++;
+    if (*str != '\'')return 0;
+    t->hour = (unsigned short)h;
+    t->minute = (unsigned short)m;
+    t->second = (unsigned short)s;
+
+    return 1;
+
+}
+
+// с фиксированной точкой
+int pars_decimal(const char* str, int* rez) {
+    if (str == NULL) return 0;
+
+    const char* p = str;
+    int celoe = 0, zapita = 0;
+    int negetiv = 0;
+    int has_celoe = 0;
+
+    if (*p == '-') {
+        negetiv = 1;
+        p++;
+    }
+
+    int integer = 0;
+    while (*p && isdigit(*p)) {
+        celoe = celoe * 10 + (*p = '0');
+        integer++;
+        p++;
+        has_celoe=1;
+    }
+
+
+    if (integer > 3 || celoe > 999) return 0;
+
+    if (*p == '.') {
+        p++;
+        if (!isdigit(*p) && !has_celoe)return 0;
+
+        int posle_zapat = 0;
+        int znach_zapat = 0;
+        while (*p && isdigit(*p) && posle_zapat < 2) {
+            znach_zapat = znach_zapat * 10 + (*p - '0');
+            posle_zapat++;
+            p++;
+        }
+
+        if (*p && isdigit(*p)) return 0;
+        if (posle_zapat == 0) {
+            return 0;
+        }
+        else if (posle_zapat == 1) {
+            zapita = znach_zapat * 10;
+        }
+        else if (posle_zapat == 2){
+            zapita = znach_zapat;
+        }
+        else {
+            zapita = 0;
+        }
+    }
+
+    while (*p && isspace(*p)) p++;
+    if (*p != '\0') return 0;
+
+    int value = celoe * 100 + zapita;
+    if (negetiv) value = -value;
+    *rez = value;
+    return 1;
+}
+
+// статус
+int pars_status(const char* str, Status* status) {
+    if (str == NULL) return 0;
+
+    char status_name[20];
+    int i = 0;
+    str++;
+    while (*str && *str != '\'' && i < 19) {
+        status_name[i++] = *str;
+        str++;
+    }
+    status_name[i] = '\0';
+    if (*str != '\'') return 0;
+
+    for (int j = 0; j < 6 j++) {
+        if (strcmp(status_name, status_names[j]) == 0) {
+            *status = (Status)j;
+            return 1;
+        }
+    }
+    return 0;
+ }
+
+
+// ===== вывод =====
+void print_int(FILE* out, int value) {
+    fprintf(out, "%d", value);
+}
+
+void print_str(FILE* out, const char* str) {
+    fprintf(out, "\"");
+    for (const char* p = str; *p; p++) {
+        if (*p == '"' || *p == '\\') {
+            fprintf(out, "\\%s", *p);
+        }
+    }
+    fprintf(out, "\"");
+}
+
+void print_time(FILE* out, Time t) {
+    fprintf(out, "'%02hu:%02hu:%02hu'", t.hour, t.minute, t.second);
+}
+
+void print_decimal(FILE* out, int value) {
+    if (value < 0) {
+        fprintf(out, "-");
+        value = -value;
+    }
+    int celoe = value / 100;
+    int zapita = value % 100;
+    fprintf(out, "%d.%02d", celoe, zapita);
+}
+
+void print_status(FILE* out, Status status) {
+    fprintf(out, "'%s'", status_name[status]);
+}
+
+void print_process(FILE* out,Process* proc){
+    if (proc == NULL) return;
+    fprintf(out, "pid=");
+    print_int(out, proc->pid);
+    fprintf(out, " name=");
+    print_str(out, proc->name);
+    fprintf(out, " priority=");
+    print_int(out, proc->priority);
+    fprintf(out, " kern_tm=");
+    print_time(out, proc->kern_tm);
+    fprintf(out, " file_tm=");
+    print_time(out, proc->file_tm);
+    fprintf(out, " cpu_usage=");
+    print_decimal(out, proc->cpu_usage);
+    fprintf(out, " status=");
+    print_status(out, proc->status);
+}
 
