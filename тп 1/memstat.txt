@@ -1,0 +1,4 @@
+malloc:246
+calloc:0
+realloc:0
+free:236
