@@ -1,4 +1,4 @@
-﻿#define_CRT_SECURE_NO_WARNINGS
+﻿#define _CRT_SECURE_NO_WARNINGS 1
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -170,12 +170,15 @@ int pars_valid_int(const char* str) {
     return 1;
 }
 
+
 int diapozon_int(const char* str, int* rez) {
     if (!pars_valid_int(str)) return 0;
     char* end;
+    
     long long val = strtoll(str, &end, 10);
     if (val == LLONG_MAX || val == LLONG_MIN) return 0;
-    if (val < -2147483648LL || val > 2147483647LL) return 0;
+    // унарный минус
+    if (val < -2147483647LL - 1 || val > 2147483647LL) return 0;
     *rez = (int)val;
     return 1;
 }
@@ -230,6 +233,7 @@ int pars_time(const char* str, Time* t) {
     return 1;
 }
 
+// ИСПРАВЛЕНО: заменяем long long на long для VS2010
 int pars_decimal(const char* str, int* rez) {
     if (str == NULL || rez == NULL) return 0;
 
@@ -245,9 +249,10 @@ int pars_decimal(const char* str, int* rez) {
     // Проверка на пустую строку после знака
     if (*str == '\0') return 0;
 
+    // ВОЗВРАЩАЕМ long long
     long long int_part = 0;
     int int_digits = 0;
-    int frac_part = 0;
+    long long frac_part = 0;
     int frac_digits = 0;
     int has_decimal_point = 0;
 
@@ -282,7 +287,6 @@ int pars_decimal(const char* str, int* rez) {
     if (*str != '\0') return 0;
 
     // Валидация в соответствии с decimal(3,2)
-    // Цифр в целой части не должно быть больше 3, но может быть 0
     if (int_digits > 3) return 0;
 
     // Нормализуем дробную часть до двух цифр
@@ -290,26 +294,22 @@ int pars_decimal(const char* str, int* rez) {
         frac_part *= 10;
     }
     else if (frac_digits == 0) {
-        // Если дробной части нет, но точка была, то это ".", что недопустимо по логике,
-        // но в тестах есть "1.", что должно означать 1.00.
-        // Если точка была, но после нее нет цифр, считаем что дробная часть 0.
         if (has_decimal_point) {
             frac_part = 0;
         }
         else {
-            // Если не было ни точки, ни дробной части, то это целое число, и мы должны добавить ".00"
             frac_part = 0;
         }
     }
-    // Если было 2 цифры, ничего делать не надо.
 
     // Финальная проверка на диапазон (макс 999.99)
     if (int_part > 999) return 0;
-    if (int_part == 999 && frac_part > 99) return 0; // 999.99 - ок, 999.100 - нет
+    if (int_part == 999 && frac_part > 99) return 0;
 
     long long value = int_part * 100 + frac_part;
     value *= sign;
 
+    // ИСПРАВЛЕНО: используем LL для long long
     if (value < -2147483647LL - 1 || value > 2147483647LL) return 0;
 
     *rez = (int)value;
@@ -363,7 +363,6 @@ void print_decimal(FILE* out, int value) {
     fprintf(out, "%d.%02d", value / 100, value % 100);
 }
 
-// ===== print_status  =====
 void print_status(FILE* out, Status status) {
     fprintf(out, "'%s'", status_names[status]);
 }
@@ -433,7 +432,7 @@ typedef struct Condition {
 int parse_condition(const char* str, Condition* cond) {
     if (!str || !cond) return 0;
 
-    char* temp = my_malloc(strlen(str) + 1);
+    char* temp = (char*)my_malloc(strlen(str) + 1);
     if (!temp) return 0;
     strcpy(temp, str);
 
@@ -445,7 +444,9 @@ int parse_condition(const char* str, Condition* cond) {
         return 0;
     }
 
-    int field_len = op_start - temp;
+    // ИСПРАВЛЕНО: явное приведение для предупреждения C4244
+    ptrdiff_t diff = op_start - temp;
+    int field_len = (int)diff;
     strncpy(cond->field_name, temp, field_len);
     cond->field_name[field_len] = '\0';
 
@@ -626,7 +627,7 @@ char** parse_field_list(const char* str, int* count) {
         return NULL;
     }
 
-    char* temp = my_malloc(strlen(str) + 1);
+    char* temp = (char*)my_malloc(strlen(str) + 1);
     if (!temp) {
         *count = 0;
         return NULL;
@@ -638,7 +639,7 @@ char** parse_field_list(const char* str, int* count) {
         if (*p == ',') (*count)++;
     }
 
-    char** result = my_malloc(*count * sizeof(char*));
+    char** result = (char**)my_malloc(*count * sizeof(char*));
     if (!result) {
         my_free(temp);
         *count = 0;
@@ -651,7 +652,7 @@ char** parse_field_list(const char* str, int* count) {
         while (*token == ' ') token++;
         char* end = token + strlen(token) - 1;
         while (end > token && (*end == ' ' || *end == '\t')) *end-- = '\0';
-        result[idx] = my_malloc(strlen(token) + 1);
+        result[idx] = (char*)my_malloc(strlen(token) + 1);
         if (result[idx]) strcpy(result[idx], token);
         idx++;
         token = strtok(NULL, ",");
@@ -669,7 +670,8 @@ void free_field_list(char** list, int count) {
     my_free(list);
 }
 
-// ===== INSERT (ИСПРАВЛЕННАЯ ВЕРСИЯ) =====
+// ===== INSERT =====
+// ===== INSERT (ИСПРАВЛЕННАЯ) =====
 void insert(const char* args, const char* full_command, FILE* output) {
     // Создаем процесс
     Process* proc = creation_process();
@@ -722,7 +724,7 @@ void insert(const char* args, const char* full_command, FILE* output) {
             // Ищем закрывающую кавычку с учетом экранирования
             while (*p) {
                 if (*p == '\\') {
-                    p += 2; // Пропускаем экранированный символ
+                    p += 2; // ВАЖНО: пропускаем \ и следующий символ
                     continue;
                 }
                 if (*p == '"') {
@@ -749,7 +751,8 @@ void insert(const char* args, const char* full_command, FILE* output) {
 
         // Копируем значение
         const char* value_end = p;
-        ptrdiff_t value_len = value_end - value_start;
+        ptrdiff_t diff = value_end - value_start;
+        int value_len = (int)diff;
         char value_str[256] = { 0 };
         if (value_len <= 0 || value_len >= 255) {
             free_process(proc);
@@ -835,7 +838,7 @@ void select_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    char* args_copy = my_malloc(strlen(args) + 1);
+    char* args_copy = (char*)my_malloc(strlen(args) + 1);
     if (!args_copy) {
         print_incorrect(output, full_command);
         return;
@@ -853,7 +856,7 @@ void select_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    char* temp_fields = my_malloc(end - fields_str + 1);
+    char* temp_fields = (char*)my_malloc(end - fields_str + 1);
     strncpy(temp_fields, fields_str, end - fields_str);
     temp_fields[end - fields_str] = '\0';
 
@@ -868,7 +871,15 @@ void select_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    Condition conditions[100];
+    // ИСПРАВЛЕНО: динамическое выделение вместо стека
+    Condition* conditions = (Condition*)my_malloc(100 * sizeof(Condition));
+    if (!conditions) {
+        free_field_list(field_list, field_count);
+        my_free(args_copy);
+        print_incorrect(output, full_command);
+        return;
+    }
+
     int cond_count = 0;
     int error = 0;
 
@@ -876,8 +887,9 @@ void select_cmd(const char* args, const char* full_command, FILE* output) {
     while (*cond_str == ' ' || *cond_str == '\t') cond_str++;
 
     if (*cond_str) {
-        char* cond_copy = my_malloc(strlen(cond_str) + 1);
+        char* cond_copy = (char*)my_malloc(strlen(cond_str) + 1);
         if (!cond_copy) {
+            my_free(conditions);
             free_field_list(field_list, field_count);
             my_free(args_copy);
             print_incorrect(output, full_command);
@@ -899,6 +911,7 @@ void select_cmd(const char* args, const char* full_command, FILE* output) {
     }
 
     if (error) {
+        my_free(conditions);
         free_field_list(field_list, field_count);
         my_free(args_copy);
         print_incorrect(output, full_command);
@@ -946,6 +959,7 @@ void select_cmd(const char* args, const char* full_command, FILE* output) {
         curr = curr->next;
     }
 
+    my_free(conditions);
     free_field_list(field_list, field_count);
     my_free(args_copy);
 }
@@ -960,14 +974,21 @@ void delete_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    char* args_copy = my_malloc(strlen(args) + 1);
+    char* args_copy = (char*)my_malloc(strlen(args) + 1);
     if (!args_copy) {
         print_incorrect(output, full_command);
         return;
     }
     strcpy(args_copy, args);
 
-    Condition conditions[100];
+    // ИСПРАВЛЕНО: динамическое выделение вместо стека
+    Condition* conditions = (Condition*)my_malloc(100 * sizeof(Condition));
+    if (!conditions) {
+        my_free(args_copy);
+        print_incorrect(output, full_command);
+        return;
+    }
+
     int cond_count = 0;
     int error = 0;
 
@@ -982,13 +1003,15 @@ void delete_cmd(const char* args, const char* full_command, FILE* output) {
     }
 
     if (error) {
+        my_free(conditions);
         my_free(args_copy);
         print_incorrect(output, full_command);
         return;
     }
 
-    int* indices = my_malloc(process_count * sizeof(int));
+    int* indices = (int*)my_malloc(process_count * sizeof(int));
     if (!indices) {
+        my_free(conditions);
         my_free(args_copy);
         print_incorrect(output, full_command);
         return;
@@ -1009,6 +1032,7 @@ void delete_cmd(const char* args, const char* full_command, FILE* output) {
     }
 
     my_free(indices);
+    my_free(conditions);
     my_free(args_copy);
     fprintf(output, "delete:%d\n", del_count);
 }
@@ -1035,7 +1059,7 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    char* args_copy = my_malloc(strlen(args) + 1);
+    char* args_copy = (char*)my_malloc(strlen(args) + 1);
     if (!args_copy) {
         print_incorrect(output, full_command);
         return;
@@ -1054,7 +1078,7 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    char* updates_str = my_malloc(end - p + 1);
+    char* updates_str = (char*)my_malloc(end - p + 1);
     strncpy(updates_str, p, end - p);
     updates_str[end - p] = '\0';
 
@@ -1062,7 +1086,7 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
     while (*cond_str == ' ' || *cond_str == '\t') cond_str++;
     if (*cond_str == '\0') cond_str = NULL;
 
-    char* updates_copy = my_malloc(strlen(updates_str) + 1);
+    char* updates_copy = (char*)my_malloc(strlen(updates_str) + 1);
     if (!updates_copy) {
         my_free(updates_str);
         my_free(args_copy);
@@ -1121,13 +1145,21 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    Condition conditions[100];
+    // ИСПРАВЛЕНО: динамическое выделение вместо стека
+    Condition* conditions = (Condition*)my_malloc(100 * sizeof(Condition));
+    if (!conditions) {
+        my_free(args_copy);
+        print_incorrect(output, full_command);
+        return;
+    }
+
     int cond_count = 0;
     int error = 0;
 
     if (cond_str) {
-        char* cond_copy = my_malloc(strlen(cond_str) + 1);
+        char* cond_copy = (char*)my_malloc(strlen(cond_str) + 1);
         if (!cond_copy) {
+            my_free(conditions);
             my_free(args_copy);
             print_incorrect(output, full_command);
             return;
@@ -1147,6 +1179,7 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
     }
 
     if (error) {
+        my_free(conditions);
         my_free(args_copy);
         print_incorrect(output, full_command);
         return;
@@ -1164,6 +1197,7 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
         curr = curr->next;
     }
 
+    my_free(conditions);
     my_free(args_copy);
     fprintf(output, "update:%d\n", updated);
 }
@@ -1206,7 +1240,7 @@ void uniq_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    char* args_copy = my_malloc(strlen(args) + 1);
+    char* args_copy = (char*)my_malloc(strlen(args) + 1);
     if (!args_copy) {
         print_incorrect(output, full_command);
         return;
@@ -1238,7 +1272,7 @@ void uniq_cmd(const char* args, const char* full_command, FILE* output) {
         }
     }
 
-    int* to_delete = my_malloc(process_count * sizeof(int));
+    int* to_delete = (int*)my_malloc(process_count * sizeof(int));
     if (!to_delete) {
         free_field_list(field_list, field_count);
         my_free(args_copy);
@@ -1319,7 +1353,7 @@ int compare_for_sort(Process* a, Process* b, SortField* fields, int count) {
 int parse_sort_fields(const char* str, SortField* fields, int* count) {
     if (!str || !*str || !fields || !count) return 0;
 
-    char* temp = my_malloc(strlen(str) + 1);
+    char* temp = (char*)my_malloc(strlen(str) + 1);
     if (!temp) return 0;
     strcpy(temp, str);
 
@@ -1369,13 +1403,13 @@ int parse_sort_fields(const char* str, SortField* fields, int* count) {
     return !error && *count > 0;
 }
 
-// Добавим новую структуру для сортировки
+// Структура для сортировки
 typedef struct {
     Process* proc;
     int index;
 } SortItem;
 
-// Новая функция сравнения с учетом индекса
+// Функция сравнения с учетом индекса
 int compare_for_sort_stable(SortItem* a, SortItem* b, SortField* fields, int count) {
     for (int i = 0; i < count; i++) {
         int cmp = 0;
@@ -1411,7 +1445,7 @@ int compare_for_sort_stable(SortItem* a, SortItem* b, SortField* fields, int cou
     return compare_int(a->index, b->index);
 }
 
-// Модифицированная функция быстрой сортировки для SortItem
+// Быстрая сортировка для SortItem
 void quicksort_stable(SortItem* arr, int left, int right, SortField* fields, int count) {
     if (left >= right) return;
 
@@ -1442,7 +1476,7 @@ void sort_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    char* args_copy = my_malloc(strlen(args) + 1);
+    char* args_copy = (char*)my_malloc(strlen(args) + 1);
     if (!args_copy) {
         print_incorrect(output, full_command);
         return;
@@ -1475,7 +1509,7 @@ void sort_cmd(const char* args, const char* full_command, FILE* output) {
     }
 
     // Создаем массив SortItem с индексами
-    SortItem* items = my_malloc(process_count * sizeof(SortItem));
+    SortItem* items = (SortItem*)my_malloc(process_count * sizeof(SortItem));
     if (!items) {
         my_free(args_copy);
         print_incorrect(output, full_command);
@@ -1507,7 +1541,6 @@ void sort_cmd(const char* args, const char* full_command, FILE* output) {
 // ===== MAIN =====
 
 int main() {
-
     FILE* input = fopen("input.txt", "r");
     FILE* output = fopen("output.txt", "w");
 
@@ -1524,7 +1557,8 @@ int main() {
             char* cr = strchr(line, '\r');
             if (cr) *cr = '\0';
 
-            int len = strlen(line);
+            // ИСПРАВЛЕНО: явное приведение для предупреждения C4267
+            size_t len = strlen(line);
             while (len > 0 && isspace(line[len - 1])) {
                 line[len - 1] = '\0';
                 len--;
@@ -1532,7 +1566,7 @@ int main() {
 
             if (line[0] == '\0') continue;
 
-            char* line_copy = my_malloc(strlen(line) + 1);
+            char* line_copy = (char*)my_malloc(strlen(line) + 1);
             if (!line_copy) continue;
             strcpy(line_copy, line);
 
@@ -1574,7 +1608,6 @@ int main() {
     }
 
     fclose(output);
-    clear_allproc();
 
     FILE* memstat = fopen("memstat.txt", "w");
     if (memstat) {
@@ -1585,7 +1618,7 @@ int main() {
         fclose(memstat);
     }
 
-    
+    clear_allproc();
 
     return 0;
 }
