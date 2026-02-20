@@ -1,10 +1,11 @@
-#define _CRT_SECURE_NO_WARNINGS
+﻿#define_CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 
-// ===== ��������� ���� =====
+// ===== КАСТОМНЫЕ ТИПЫ =====
 
 typedef enum {
     RUNNING,
@@ -41,19 +42,19 @@ typedef struct Process {
     struct Process* next;
 } Process;
 
-// ===== ���������� ���������� =====
+// ===== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ =====
 
 Process* head = NULL;
 int process_count = 0;
 
-// ===== �������� ������ =====
+// ===== СЧЕТЧИКИ ПАМЯТИ =====
 
 int malloc_count = 0;
 int calloc_count = 0;
 int realloc_count = 0;
 int free_count = 0;
 
-// ===== ������� ������ =====
+// ===== ФУНКЦИИ ПАМЯТИ =====
 
 void* my_malloc(size_t size) {
     malloc_count++;
@@ -81,7 +82,7 @@ void my_free(void* ptr) {
     }
 }
 
-// ===== ������ �� ������� =====
+// ===== РАБОТА СО СПИСКОМ =====
 
 Process* creation_process() {
     Process* new_proc = (Process*)my_malloc(sizeof(Process));
@@ -144,7 +145,7 @@ void clear_allproc() {
     process_count = 0;
 }
 
-// ===== ����� ������ =====
+// ===== ВЫВОД ОШИБОК =====
 
 void print_incorrect(FILE* output, const char* command) {
     fprintf(output, "incorrect:'");
@@ -156,7 +157,7 @@ void print_incorrect(FILE* output, const char* command) {
     fprintf(output, "'\n");
 }
 
-// ===== ������� =====
+// ===== ПАРСИНГ =====
 
 int pars_valid_int(const char* str) {
     if (str == NULL || *str == '\0') return 0;
@@ -172,19 +173,22 @@ int pars_valid_int(const char* str) {
 int diapozon_int(const char* str, int* rez) {
     if (!pars_valid_int(str)) return 0;
     char* end;
-    long val = strtol(str, &end, 10);
-    if (val < -2147483647 - 1 || val > 2147483647) return 0;
+    long long val = strtoll(str, &end, 10);
+    if (val == LLONG_MAX || val == LLONG_MIN) return 0;
+    if (val < -2147483648LL || val > 2147483647LL) return 0;
     *rez = (int)val;
     return 1;
 }
 
 char* pars_str(const char* str) {
     if (str == NULL || *str != '"') return NULL;
+
     str++;
     char* rez = (char*)my_malloc(strlen(str) + 1);
     if (rez == NULL) return NULL;
+
     int i = 0;
-    while (*str && *str != '"') {
+    while (*str) {
         if (*str == '\\') {
             str++;
             if (*str == '"' || *str == '\\') {
@@ -193,17 +197,20 @@ char* pars_str(const char* str) {
             }
             else {
                 rez[i++] = '\\';
+                if (*str) rez[i++] = *str;
+                str++;
             }
+        }
+        else if (*str == '"') {
+            str++;
+            break;
         }
         else {
             rez[i++] = *str;
             str++;
         }
     }
-    if (*str != '"') {
-        my_free(rez);
-        return NULL;
-    }
+
     rez[i] = '\0';
     return rez;
 }
@@ -225,43 +232,85 @@ int pars_time(const char* str, Time* t) {
 
 int pars_decimal(const char* str, int* rez) {
     if (str == NULL || rez == NULL) return 0;
-    const char* p = str;
-    int celoe = 0, zapita = 0, negetiv = 0, celoe_digits = 0, has_celoe = 0;
 
-    if (*p == '-') {
-        negetiv = 1;
-        p++;
+    // Пропускаем начальные пробелы
+    while (*str == ' ') str++;
+
+    int sign = 1;
+    if (*str == '-') {
+        sign = -1;
+        str++;
     }
 
-    while (*p && isdigit(*p)) {
-        celoe = celoe * 10 + (*p - '0');
-        celoe_digits++;
-        p++;
-        has_celoe = 1;
+    // Проверка на пустую строку после знака
+    if (*str == '\0') return 0;
+
+    long long int_part = 0;
+    int int_digits = 0;
+    int frac_part = 0;
+    int frac_digits = 0;
+    int has_decimal_point = 0;
+
+    // Парсим целую часть
+    while (*str && isdigit(*str)) {
+        // Проверка на переполнение на лету
+        if (int_part > 999) return 0; // Больше 3 цифр
+        int_part = int_part * 10 + (*str - '0');
+        int_digits++;
+        str++;
     }
 
-    if (celoe_digits > 3 || celoe > 999) return 0;
+    // Проверка: если после цифр идет не точка и не конец строки - ошибка
+    if (*str != '\0' && *str != '.') return 0;
 
-    if (*p == '.') {
-        p++;
-        if (!isdigit(*p) && !has_celoe) return 0;
-        int frac_digits = 0, frac_value = 0;
-        while (*p && isdigit(*p) && frac_digits < 2) {
-            frac_value = frac_value * 10 + (*p - '0');
+    // Парсим дробную часть, если есть точка
+    if (*str == '.') {
+        has_decimal_point = 1;
+        str++;
+        // Считываем до двух цифр дробной части
+        while (*str && isdigit(*str) && frac_digits < 2) {
+            frac_part = frac_part * 10 + (*str - '0');
             frac_digits++;
-            p++;
+            str++;
         }
-        if (*p && isdigit(*p)) return 0;
-        if (frac_digits == 1) zapita = frac_value * 10;
-        else if (frac_digits == 2) zapita = frac_value;
+        // Если после дробной части есть еще цифры (больше двух) - ошибка
+        if (*str && isdigit(*str)) return 0;
     }
 
-    while (*p && isspace(*p)) p++;
-    if (*p != '\0') return 0;
+    // Проверяем, что после числа нет мусора
+    while (*str == ' ') str++;
+    if (*str != '\0') return 0;
 
-    long long value = (long long)celoe * 100 + zapita;
-    if (negetiv) value = -value;
-    if (value < -2147483647 - 1 || value > 2147483647) return 0;
+    // Валидация в соответствии с decimal(3,2)
+    // Цифр в целой части не должно быть больше 3, но может быть 0
+    if (int_digits > 3) return 0;
+
+    // Нормализуем дробную часть до двух цифр
+    if (frac_digits == 1) {
+        frac_part *= 10;
+    }
+    else if (frac_digits == 0) {
+        // Если дробной части нет, но точка была, то это ".", что недопустимо по логике,
+        // но в тестах есть "1.", что должно означать 1.00.
+        // Если точка была, но после нее нет цифр, считаем что дробная часть 0.
+        if (has_decimal_point) {
+            frac_part = 0;
+        }
+        else {
+            // Если не было ни точки, ни дробной части, то это целое число, и мы должны добавить ".00"
+            frac_part = 0;
+        }
+    }
+    // Если было 2 цифры, ничего делать не надо.
+
+    // Финальная проверка на диапазон (макс 999.99)
+    if (int_part > 999) return 0;
+    if (int_part == 999 && frac_part > 99) return 0; // 999.99 - ок, 999.100 - нет
+
+    long long value = int_part * 100 + frac_part;
+    value *= sign;
+
+    if (value < -2147483647LL - 1 || value > 2147483647LL) return 0;
 
     *rez = (int)value;
     return 1;
@@ -287,7 +336,7 @@ int pars_status(const char* str, Status* status) {
     return 0;
 }
 
-// ===== ����� =====
+// ===== ВЫВОД =====
 
 void print_int(FILE* out, int value) {
     fprintf(out, "%d", value);
@@ -314,11 +363,12 @@ void print_decimal(FILE* out, int value) {
     fprintf(out, "%d.%02d", value / 100, value % 100);
 }
 
+// ===== print_status  =====
 void print_status(FILE* out, Status status) {
     fprintf(out, "'%s'", status_names[status]);
 }
 
-// ===== ��������� =====
+// ===== СРАВНЕНИЕ =====
 
 int compare_int(int a, int b) {
     if (a < b) return -1;
@@ -348,7 +398,7 @@ int compare_status(Status a, Status b) {
     return compare_int(a, b);
 }
 
-// ===== ������ �� �������� �������� =====
+// ===== РАБОТА СО СПИСКАМИ ЗНАЧЕНИЙ =====
 
 int is_value_in_list(const char* list_str, const char* value) {
     if (list_str == NULL || *list_str != '[') return 0;
@@ -370,7 +420,7 @@ int is_value_in_list(const char* list_str, const char* value) {
     return 0;
 }
 
-// ===== ��������� ������� =====
+// ===== СТРУКТУРА УСЛОВИЯ =====
 
 typedef struct Condition {
     char field_name[50];
@@ -378,7 +428,87 @@ typedef struct Condition {
     char value_str[256];
 } Condition;
 
-// ===== �������� ������� =====
+// ===== ПАРСИНГ УСЛОВИЯ =====
+
+int parse_condition(const char* str, Condition* cond) {
+    if (!str || !cond) return 0;
+
+    char* temp = my_malloc(strlen(str) + 1);
+    if (!temp) return 0;
+    strcpy(temp, str);
+
+    char* op_start = temp;
+    while (*op_start && !strchr("=!<>/", *op_start)) op_start++;
+
+    if (*op_start == '\0') {
+        my_free(temp);
+        return 0;
+    }
+
+    int field_len = op_start - temp;
+    strncpy(cond->field_name, temp, field_len);
+    cond->field_name[field_len] = '\0';
+
+    char* end = cond->field_name + strlen(cond->field_name) - 1;
+    while (end >= cond->field_name && (*end == ' ' || *end == '\t')) *end-- = '\0';
+
+    char* op = op_start;
+    char* val_start = NULL;
+
+    if (strncmp(op, "<=", 2) == 0) {
+        strcpy(cond->operator, "<=");
+        val_start = op + 2;
+    }
+    else if (strncmp(op, ">=", 2) == 0) {
+        strcpy(cond->operator, ">=");
+        val_start = op + 2;
+    }
+    else if (strncmp(op, "!=", 2) == 0) {
+        strcpy(cond->operator, "!=");
+        val_start = op + 2;
+    }
+    else if (strncmp(op, "==", 2) == 0) {
+        strcpy(cond->operator, "=");
+        val_start = op + 2;
+    }
+    else if (*op == '/') {
+        op++;
+        char* slash = strchr(op, '/');
+        if (!slash) {
+            my_free(temp);
+            return 0;
+        }
+        *slash = '\0';
+        strcpy(cond->operator, op);
+        val_start = slash + 1;
+    }
+    else {
+        if (*op == '=') {
+            strcpy(cond->operator, "=");
+            val_start = op + 1;
+        }
+        else if (*op == '<') {
+            strcpy(cond->operator, "<");
+            val_start = op + 1;
+        }
+        else if (*op == '>') {
+            strcpy(cond->operator, ">");
+            val_start = op + 1;
+        }
+        else {
+            my_free(temp);
+            return 0;
+        }
+    }
+
+    while (*val_start == ' ' || *val_start == '\t') val_start++;
+    strcpy(cond->value_str, val_start);
+
+    my_free(temp);
+    return 1;
+}
+
+// ===== ПРОВЕРКА УСЛОВИЙ =====
 
 int check_condition(Process* proc, Condition* cond) {
     if (!proc || !cond) return 0;
@@ -488,7 +618,7 @@ int check_all_conditions(Process* proc, Condition* conditions, int cond_count) {
     return 1;
 }
 
-// ===== ������� ������ ����� =====
+// ===== ПАРСИНГ СПИСКА ПОЛЕЙ =====
 
 char** parse_field_list(const char* str, int* count) {
     if (!str || !*str) {
@@ -539,186 +669,162 @@ void free_field_list(char** list, int count) {
     my_free(list);
 }
 
-// ===== ������� ������� =====
-
-int parse_condition(const char* str, Condition* cond) {
-    if (!str || !cond) return 0;
-
-    char* temp = my_malloc(strlen(str) + 1);
-    if (!temp) return 0;
-    strcpy(temp, str);
-
-    char* op_start = temp;
-    while (*op_start && !strchr("=!<>/", *op_start)) op_start++;
-
-    if (*op_start == '\0') {
-        my_free(temp);
-        return 0;
-    }
-
-    int field_len = op_start - temp;
-    strncpy(cond->field_name, temp, field_len);
-    cond->field_name[field_len] = '\0';
-
-    char* end = cond->field_name + strlen(cond->field_name) - 1;
-    while (end >= cond->field_name && (*end == ' ' || *end == '\t')) *end-- = '\0';
-
-    char* op = op_start;
-    char* val_start = NULL;
-
-    if (strncmp(op, "<=", 2) == 0) {
-        strcpy(cond->operator, "<=");
-        val_start = op + 2;
-    }
-    else if (strncmp(op, ">=", 2) == 0) {
-        strcpy(cond->operator, ">=");
-        val_start = op + 2;
-    }
-    else if (strncmp(op, "!=", 2) == 0) {
-        strcpy(cond->operator, "!=");
-        val_start = op + 2;
-    }
-    else if (strncmp(op, "==", 2) == 0) {
-        strcpy(cond->operator, "=");
-        val_start = op + 2;
-    }
-    else if (strncmp(op, "in", 2) == 0) {
-        strcpy(cond->operator, "in");
-        val_start = op + 2;
-        if (*val_start == '/') val_start++;
-    }
-    else if (strncmp(op, "not_in", 6) == 0) {
-        strcpy(cond->operator, "not_in");
-        val_start = op + 6;
-        if (*val_start == '/') val_start++;
-    }
-    else {
-        if (*op == '=') {
-            strcpy(cond->operator, "=");
-            val_start = op + 1;
-        }
-        else if (*op == '<') {
-            strcpy(cond->operator, "<");
-            val_start = op + 1;
-        }
-        else if (*op == '>') {
-            strcpy(cond->operator, ">");
-            val_start = op + 1;
-        }
-        else {
-            my_free(temp);
-            return 0;
-        }
-    }
-
-    while (*val_start == ' ' || *val_start == '\t') val_start++;
-    strcpy(cond->value_str, val_start);
-
-    my_free(temp);
-    return 1;
-}
-
-// ===== INSERT =====
-
+// ===== INSERT (ИСПРАВЛЕННАЯ ВЕРСИЯ) =====
 void insert(const char* args, const char* full_command, FILE* output) {
+    // Создаем процесс
     Process* proc = creation_process();
     if (!proc) {
         print_incorrect(output, full_command);
         return;
     }
 
-    char* args_copy = my_malloc(strlen(args) + 1);
-    if (!args_copy) {
-        free_process(proc);
-        print_incorrect(output, full_command);
-        return;
-    }
-    strcpy(args_copy, args);
-
+    // Флаги для отслеживания полей
     int pid_set = 0, name_set = 0, priority_set = 0;
     int kern_set = 0, file_set = 0, cpu_set = 0, status_set = 0;
-    int found = 0;
+    int fields_found = 0;
 
-    char* token = strtok(args_copy, ",");
-    while (token) {
-        while (*token == ' ') token++;
+    const char* p = args;
+    // Пропускаем начальные пробелы
+    while (*p == ' ') p++;
 
-        char* eq = strchr(token, '=');
-        if (!eq) {
-            my_free(args_copy);
+    // Основной цикл парсинга
+    while (*p) {
+        // Парсим имя поля
+        char field_name[50] = { 0 };
+        int i = 0;
+        while (*p && *p != '=' && i < 49) {
+            field_name[i++] = *p;
+            p++;
+        }
+        if (*p != '=') {
             free_process(proc);
             print_incorrect(output, full_command);
             return;
         }
+        field_name[i] = '\0';
+        // Убираем пробелы в конце имени поля
+        char* end = field_name + strlen(field_name) - 1;
+        while (end > field_name && (*end == ' ' || *end == '\t')) *end-- = '\0';
 
-        *eq = '\0';
-        char* field = token;
-        char* value = eq + 1;
+        p++; // Пропускаем '='
 
-        char* end = field + strlen(field) - 1;
-        while (end > field && (*end == ' ' || *end == '\t')) *end-- = '\0';
-        while (*value == ' ' || *value == '\t') value++;
+        // Пропускаем пробелы перед значением
+        while (*p == ' ') p++;
 
-        if (strcmp(field, "pid") == 0) {
-            if (pid_set) goto error;
-            if (!diapozon_int(value, &proc->pid)) goto error;
-            pid_set = 1; found++;
+        // Запоминаем начало значения
+        const char* value_start = p;
+        char delimiter = 0;
+
+        // Определяем тип значения по первому символу
+        if (*p == '"') {
+            delimiter = '"';
+            p++; // Пропускаем открывающую кавычку
+            // Ищем закрывающую кавычку с учетом экранирования
+            while (*p) {
+                if (*p == '\\') {
+                    p += 2; // Пропускаем экранированный символ
+                    continue;
+                }
+                if (*p == '"') {
+                    p++; // Нашли закрывающую кавычку
+                    break;
+                }
+                p++;
+            }
         }
-        else if (strcmp(field, "name") == 0) {
-            if (name_set) goto error;
-            proc->name = pars_str(value);
-            if (!proc->name) goto error;
-            name_set = 1; found++;
-        }
-        else if (strcmp(field, "priority") == 0) {
-            if (priority_set) goto error;
-            if (!diapozon_int(value, &proc->priority)) goto error;
-            priority_set = 1; found++;
-        }
-        else if (strcmp(field, "kern_tm") == 0) {
-            if (kern_set) goto error;
-            if (!pars_time(value, &proc->kern_tm)) goto error;
-            kern_set = 1; found++;
-        }
-        else if (strcmp(field, "file_tm") == 0) {
-            if (file_set) goto error;
-            if (!pars_time(value, &proc->file_tm)) goto error;
-            file_set = 1; found++;
-        }
-        else if (strcmp(field, "cpu_usage") == 0) {
-            if (cpu_set) goto error;
-            if (!pars_decimal(value, &proc->cpu_usage)) goto error;
-            cpu_set = 1; found++;
-        }
-        else if (strcmp(field, "status") == 0) {
-            if (status_set) goto error;
-            if (!pars_status(value, &proc->status)) goto error;
-            status_set = 1; found++;
+        else if (*p == '\'') {
+            delimiter = '\'';
+            p++; // Пропускаем открывающую кавычку
+            while (*p && *p != '\'') {
+                p++;
+            }
+            if (*p == '\'') p++; // Пропускаем закрывающую кавычку
         }
         else {
-            goto error;
+            // Числовое значение - идем до запятой или конца строки
+            while (*p && *p != ',') {
+                p++;
+            }
         }
 
-        token = strtok(NULL, ",");
-        continue;
+        // Копируем значение
+        const char* value_end = p;
+        ptrdiff_t value_len = value_end - value_start;
+        char value_str[256] = { 0 };
+        if (value_len <= 0 || value_len >= 255) {
+            free_process(proc);
+            print_incorrect(output, full_command);
+            return;
+        }
+        strncpy(value_str, value_start, value_len);
+        value_str[value_len] = '\0';
 
-    error:
-        my_free(args_copy);
-        free_process(proc);
-        print_incorrect(output, full_command);
-        return;
+        // Обработка поля
+        if (strcmp(field_name, "pid") == 0) {
+            if (pid_set++) goto error;
+            if (!diapozon_int(value_str, &proc->pid)) goto error;
+            fields_found++;
+        }
+        else if (strcmp(field_name, "name") == 0) {
+            if (name_set++) goto error;
+            proc->name = pars_str(value_str);
+            if (!proc->name) goto error;
+            fields_found++;
+        }
+        else if (strcmp(field_name, "priority") == 0) {
+            if (priority_set++) goto error;
+            if (!diapozon_int(value_str, &proc->priority)) goto error;
+            fields_found++;
+        }
+        else if (strcmp(field_name, "kern_tm") == 0) {
+            if (kern_set++) goto error;
+            if (!pars_time(value_str, &proc->kern_tm)) goto error;
+            fields_found++;
+        }
+        else if (strcmp(field_name, "file_tm") == 0) {
+            if (file_set++) goto error;
+            if (!pars_time(value_str, &proc->file_tm)) goto error;
+            fields_found++;
+        }
+        else if (strcmp(field_name, "cpu_usage") == 0) {
+            if (cpu_set++) goto error;
+            if (!pars_decimal(value_str, &proc->cpu_usage)) goto error;
+            fields_found++;
+        }
+        else if (strcmp(field_name, "status") == 0) {
+            if (status_set++) goto error;
+            if (!pars_status(value_str, &proc->status)) goto error;
+            fields_found++;
+        }
+        else {
+            goto error; // Неизвестное поле
+        }
+
+        // Пропускаем пробелы после значения
+        while (*p == ' ') p++;
+        // Проверяем запятую
+        if (*p == ',') {
+            p++;
+            while (*p == ' ') p++;
+        }
+        else if (*p != '\0') {
+            goto error; // Ожидалась запятая или конец строки
+        }
     }
 
-    my_free(args_copy);
-
-    if (found != 7) {
-        free_process(proc);
-        print_incorrect(output, full_command);
-        return;
+    // Проверяем, что все 7 полей заполнены
+    if (fields_found != 7) {
+        goto error;
     }
 
+    // Успех - добавляем процесс
     append_process(proc);
     fprintf(output, "insert:%d\n", process_count);
+    return;
+
+error:
+    free_process(proc);
+    print_incorrect(output, full_command);
 }
 
 // ===== SELECT =====
@@ -736,7 +842,6 @@ void select_cmd(const char* args, const char* full_command, FILE* output) {
     }
     strcpy(args_copy, args);
 
-    // ������ ������� �����
     char* fields_str = args_copy;
     while (*fields_str == ' ' || *fields_str == '\t') fields_str++;
     char* end = fields_str;
@@ -763,7 +868,6 @@ void select_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    // ������� �������
     Condition conditions[100];
     int cond_count = 0;
     int error = 0;
@@ -938,15 +1042,29 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
     }
     strcpy(args_copy, args);
 
-    char* updates_str = strtok(args_copy, " \t");
-    if (!updates_str) {
+    char* p = args_copy;
+    while (*p == ' ' || *p == '\t') p++;
+
+    char* end = p;
+    while (*end && !isspace(*end)) end++;
+
+    if (end == p) {
         my_free(args_copy);
         print_incorrect(output, full_command);
         return;
     }
 
+    char* updates_str = my_malloc(end - p + 1);
+    strncpy(updates_str, p, end - p);
+    updates_str[end - p] = '\0';
+
+    char* cond_str = end;
+    while (*cond_str == ' ' || *cond_str == '\t') cond_str++;
+    if (*cond_str == '\0') cond_str = NULL;
+
     char* updates_copy = my_malloc(strlen(updates_str) + 1);
     if (!updates_copy) {
+        my_free(updates_str);
         my_free(args_copy);
         print_incorrect(output, full_command);
         return;
@@ -960,24 +1078,28 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
     char* token = strtok(updates_copy, ",");
     while (token) {
         while (*token == ' ') token++;
+
         char* eq = strchr(token, '=');
         if (!eq) {
             my_free(updates_copy);
+            my_free(updates_str);
             my_free(args_copy);
             print_incorrect(output, full_command);
             return;
         }
+
         *eq = '\0';
         char* field = token;
         char* value = eq + 1;
 
-        char* end = field + strlen(field) - 1;
-        while (end > field && (*end == ' ' || *end == '\t')) *end-- = '\0';
+        char* end_f = field + strlen(field) - 1;
+        while (end_f > field && (*end_f == ' ' || *end_f == '\t')) *end_f-- = '\0';
         while (*value == ' ' || *value == '\t') value++;
 
         for (int i = 0; i < update_count; i++) {
             if (strcmp(update_fields[i], field) == 0) {
                 my_free(updates_copy);
+                my_free(updates_str);
                 my_free(args_copy);
                 print_incorrect(output, full_command);
                 return;
@@ -991,6 +1113,7 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
     }
 
     my_free(updates_copy);
+    my_free(updates_str);
 
     if (update_count == 0) {
         my_free(args_copy);
@@ -1002,7 +1125,6 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
     int cond_count = 0;
     int error = 0;
 
-    char* cond_str = strtok(NULL, "");
     if (cond_str) {
         char* cond_copy = my_malloc(strlen(cond_str) + 1);
         if (!cond_copy) {
@@ -1155,22 +1277,42 @@ void uniq_cmd(const char* args, const char* full_command, FILE* output) {
 
 typedef struct {
     char field_name[50];
-    int order;
+    int order; // 0 - asc, 1 - desc
 } SortField;
 
 int compare_for_sort(Process* a, Process* b, SortField* fields, int count) {
     if (!a || !b || !fields || count == 0) return 0;
+
     for (int i = 0; i < count; i++) {
         int cmp = 0;
-        if (strcmp(fields[i].field_name, "pid") == 0) cmp = compare_int(a->pid, b->pid);
-        else if (strcmp(fields[i].field_name, "name") == 0) cmp = compare_str(a->name, b->name);
-        else if (strcmp(fields[i].field_name, "priority") == 0) cmp = compare_int(a->priority, b->priority);
-        else if (strcmp(fields[i].field_name, "kern_tm") == 0) cmp = compare_time(a->kern_tm, b->kern_tm);
-        else if (strcmp(fields[i].field_name, "file_tm") == 0) cmp = compare_time(a->file_tm, b->file_tm);
-        else if (strcmp(fields[i].field_name, "cpu_usage") == 0) cmp = compare_decimal(a->cpu_usage, b->cpu_usage);
-        else if (strcmp(fields[i].field_name, "status") == 0) return 0;
-        if (cmp != 0) return fields[i].order == 0 ? cmp : -cmp;
+
+        if (strcmp(fields[i].field_name, "pid") == 0) {
+            cmp = compare_int(a->pid, b->pid);
+        }
+        else if (strcmp(fields[i].field_name, "name") == 0) {
+            cmp = compare_str(a->name, b->name);
+        }
+        else if (strcmp(fields[i].field_name, "priority") == 0) {
+            cmp = compare_int(a->priority, b->priority);
+        }
+        else if (strcmp(fields[i].field_name, "kern_tm") == 0) {
+            cmp = compare_time(a->kern_tm, b->kern_tm);
+        }
+        else if (strcmp(fields[i].field_name, "file_tm") == 0) {
+            cmp = compare_time(a->file_tm, b->file_tm);
+        }
+        else if (strcmp(fields[i].field_name, "cpu_usage") == 0) {
+            cmp = compare_decimal(a->cpu_usage, b->cpu_usage);
+        }
+        else if (strcmp(fields[i].field_name, "status") == 0) {
+            cmp = compare_status(a->status, b->status);
+        }
+
+        if (cmp != 0) {
+            return fields[i].order == 0 ? cmp : -cmp;
+        }
     }
+
     return 0;
 }
 
@@ -1187,6 +1329,7 @@ int parse_sort_fields(const char* str, SortField* fields, int* count) {
     char* token = strtok(temp, ",");
     while (token && *count < 100) {
         while (*token == ' ') token++;
+
         char* eq = strchr(token, '=');
         if (!eq) { error = 1; break; }
 
@@ -1200,17 +1343,23 @@ int parse_sort_fields(const char* str, SortField* fields, int* count) {
         end = order + strlen(order) - 1;
         while (end > order && (*end == ' ' || *end == '\t')) *end-- = '\0';
 
-        if (strcmp(name, "status") == 0) { error = 1; break; }
-
+        // Проверка на дубликаты полей
         for (int i = 0; i < *count; i++) {
             if (strcmp(fields[i].field_name, name) == 0) { error = 1; break; }
         }
         if (error) break;
 
         strcpy(fields[*count].field_name, name);
-        if (strcmp(order, "asc") == 0) fields[*count].order = 0;
-        else if (strcmp(order, "desc") == 0) fields[*count].order = 1;
-        else { error = 1; break; }
+        if (strcmp(order, "asc") == 0) {
+            fields[*count].order = 0;
+        }
+        else if (strcmp(order, "desc") == 0) {
+            fields[*count].order = 1;
+        }
+        else {
+            error = 1;
+            break;
+        }
 
         (*count)++;
         token = strtok(NULL, ",");
@@ -1220,47 +1369,71 @@ int parse_sort_fields(const char* str, SortField* fields, int* count) {
     return !error && *count > 0;
 }
 
-Process** list_to_array() {
-    if (process_count == 0) return NULL;
-    Process** arr = my_malloc(process_count * sizeof(Process*));
-    if (!arr) return NULL;
-    Process* curr = head;
-    for (int i = 0; i < process_count; i++) {
-        arr[i] = curr;
-        curr = curr->next;
-    }
-    return arr;
-}
+// Добавим новую структуру для сортировки
+typedef struct {
+    Process* proc;
+    int index;
+} SortItem;
 
-void array_to_list(Process** arr, int count) {
-    if (!arr || count == 0) {
-        head = NULL;
-        return;
-    }
-    head = arr[0];
-    for (int i = 0; i < count - 1; i++) {
-        arr[i]->next = arr[i + 1];
-    }
-    arr[count - 1]->next = NULL;
-}
+// Новая функция сравнения с учетом индекса
+int compare_for_sort_stable(SortItem* a, SortItem* b, SortField* fields, int count) {
+    for (int i = 0; i < count; i++) {
+        int cmp = 0;
 
-void quicksort(Process** arr, int left, int right, SortField* fields, int count) {
-    if (left >= right) return;
-    int p = left + (right - left) / 2;
-    Process* pivot = arr[p];
-    int i = left, j = right;
-    while (i <= j) {
-        while (i <= right && compare_for_sort(arr[i], pivot, fields, count) < 0) i++;
-        while (j >= left && compare_for_sort(arr[j], pivot, fields, count) > 0) j--;
-        if (i <= j) {
-            Process* tmp = arr[i];
-            arr[i] = arr[j];
-            arr[j] = tmp;
-            i++; j--;
+        if (strcmp(fields[i].field_name, "pid") == 0) {
+            cmp = compare_int(a->proc->pid, b->proc->pid);
+        }
+        else if (strcmp(fields[i].field_name, "name") == 0) {
+            cmp = compare_str(a->proc->name, b->proc->name);
+        }
+        else if (strcmp(fields[i].field_name, "priority") == 0) {
+            cmp = compare_int(a->proc->priority, b->proc->priority);
+        }
+        else if (strcmp(fields[i].field_name, "kern_tm") == 0) {
+            cmp = compare_time(a->proc->kern_tm, b->proc->kern_tm);
+        }
+        else if (strcmp(fields[i].field_name, "file_tm") == 0) {
+            cmp = compare_time(a->proc->file_tm, b->proc->file_tm);
+        }
+        else if (strcmp(fields[i].field_name, "cpu_usage") == 0) {
+            cmp = compare_decimal(a->proc->cpu_usage, b->proc->cpu_usage);
+        }
+        else if (strcmp(fields[i].field_name, "status") == 0) {
+            cmp = compare_status(a->proc->status, b->proc->status);
+        }
+
+        if (cmp != 0) {
+            return fields[i].order == 0 ? cmp : -cmp;
         }
     }
-    if (left < j) quicksort(arr, left, j, fields, count);
-    if (i < right) quicksort(arr, i, right, fields, count);
+
+    // Ключи равны - сравниваем по исходному индексу для стабильности
+    return compare_int(a->index, b->index);
+}
+
+// Модифицированная функция быстрой сортировки для SortItem
+void quicksort_stable(SortItem* arr, int left, int right, SortField* fields, int count) {
+    if (left >= right) return;
+
+    int i = left;
+    int j = right;
+    SortItem pivot = arr[left + (right - left) / 2];
+
+    while (i <= j) {
+        while (compare_for_sort_stable(&arr[i], &pivot, fields, count) < 0) i++;
+        while (compare_for_sort_stable(&arr[j], &pivot, fields, count) > 0) j--;
+
+        if (i <= j) {
+            SortItem temp = arr[i];
+            arr[i] = arr[j];
+            arr[j] = temp;
+            i++;
+            j--;
+        }
+    }
+
+    if (left < j) quicksort_stable(arr, left, j, fields, count);
+    if (i < right) quicksort_stable(arr, i, right, fields, count);
 }
 
 void sort_cmd(const char* args, const char* full_command, FILE* output) {
@@ -1295,20 +1468,38 @@ void sort_cmd(const char* args, const char* full_command, FILE* output) {
         return;
     }
 
-    Process** arr = list_to_array();
-    if (!arr && process_count > 0) {
+    if (process_count == 0) {
+        my_free(args_copy);
+        fprintf(output, "sort:0\n");
+        return;
+    }
+
+    // Создаем массив SortItem с индексами
+    SortItem* items = my_malloc(process_count * sizeof(SortItem));
+    if (!items) {
         my_free(args_copy);
         print_incorrect(output, full_command);
         return;
     }
 
-    if (process_count > 0) {
-        quicksort(arr, 0, process_count - 1, fields, count);
+    Process* curr = head;
+    for (int i = 0; i < process_count; i++) {
+        items[i].proc = curr;
+        items[i].index = i;  // Сохраняем исходный индекс
+        curr = curr->next;
     }
 
-    array_to_list(arr, process_count);
+    // Сортируем
+    quicksort_stable(items, 0, process_count - 1, fields, count);
 
-    if (arr) my_free(arr);
+    // Перестраиваем список
+    head = items[0].proc;
+    for (int i = 0; i < process_count - 1; i++) {
+        items[i].proc->next = items[i + 1].proc;
+    }
+    items[process_count - 1].proc->next = NULL;
+
+    my_free(items);
     my_free(args_copy);
     fprintf(output, "sort:%d\n", process_count);
 }
@@ -1316,6 +1507,7 @@ void sort_cmd(const char* args, const char* full_command, FILE* output) {
 // ===== MAIN =====
 
 int main() {
+
     FILE* input = fopen("input.txt", "r");
     FILE* output = fopen("output.txt", "w");
 
@@ -1331,6 +1523,12 @@ int main() {
             line[strcspn(line, "\n")] = '\0';
             char* cr = strchr(line, '\r');
             if (cr) *cr = '\0';
+
+            int len = strlen(line);
+            while (len > 0 && isspace(line[len - 1])) {
+                line[len - 1] = '\0';
+                len--;
+            }
 
             if (line[0] == '\0') continue;
 
@@ -1348,13 +1546,27 @@ int main() {
             while (*args && !isspace(*args)) args++;
             while (*args == ' ' || *args == '\t') args++;
 
-            if (strcmp(cmd, "insert") == 0) insert(args, line, output);
-            else if (strcmp(cmd, "select") == 0) select_cmd(args, line, output);
-            else if (strcmp(cmd, "delete") == 0) delete_cmd(args, line, output);
-            else if (strcmp(cmd, "update") == 0) update_cmd(args, line, output);
-            else if (strcmp(cmd, "uniq") == 0) uniq_cmd(args, line, output);
-            else if (strcmp(cmd, "sort") == 0) sort_cmd(args, line, output);
-            else print_incorrect(output, line);
+            if (strcmp(cmd, "insert") == 0) {
+                insert(args, line, output);
+            }
+            else if (strcmp(cmd, "select") == 0) {
+                select_cmd(args, line, output);
+            }
+            else if (strcmp(cmd, "delete") == 0) {
+                delete_cmd(args, line, output);
+            }
+            else if (strcmp(cmd, "update") == 0) {
+                update_cmd(args, line, output);
+            }
+            else if (strcmp(cmd, "uniq") == 0) {
+                uniq_cmd(args, line, output);
+            }
+            else if (strcmp(cmd, "sort") == 0) {
+                sort_cmd(args, line, output);
+            }
+            else {
+                print_incorrect(output, line);
+            }
 
             my_free(line_copy);
         }
@@ -1362,6 +1574,7 @@ int main() {
     }
 
     fclose(output);
+    clear_allproc();
 
     FILE* memstat = fopen("memstat.txt", "w");
     if (memstat) {
@@ -1372,6 +1585,7 @@ int main() {
         fclose(memstat);
     }
 
-    clear_allproc();
+    
+
     return 0;
 }

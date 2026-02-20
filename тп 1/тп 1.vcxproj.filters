@@ -21,6 +21,9 @@
     <Text Include="output.txt">
       <Filter>Source Files</Filter>
     </Text>
+    <Text Include="expected.txt">
+      <Filter>Source Files</Filter>
+    </Text>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="lab_db.c">

@@ -123,6 +123,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <Text Include="expected.txt" />
     <Text Include="input.txt" />
     <Text Include="output.txt" />
   </ItemGroup>
