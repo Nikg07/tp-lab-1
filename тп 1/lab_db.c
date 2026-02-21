@@ -164,7 +164,7 @@ int pars_valid_int(const char* str) {
     if (*str == '-') str++;
     if (*str == '\0') return 0;
     while (*str) {
-        if (!isdigit(*str)) return 0;
+        if (!isdigit((unsigned char)*str)) return 0;
         str++;
     }
     return 1;
@@ -173,12 +173,31 @@ int pars_valid_int(const char* str) {
 
 int diapozon_int(const char* str, int* rez) {
     if (!pars_valid_int(str)) return 0;
-    char* end;
-    
-    long long val = strtoll(str, &end, 10);
-    if (val == LLONG_MAX || val == LLONG_MIN) return 0;
-    // унарный минус
+
+    const char* p = str;
+    int sign = 1;
+    long long val = 0;
+
+    // Определяем знак
+    if (*p == '-') {
+        sign = -1;
+        p++;
+    }
+
+    // Парсим цифры
+    while (*p) {
+        if (!isdigit(*p)) return 0;
+        // Проверяем переполнение
+        if (val > 2147483647LL) return 0;
+        val = val * 10 + (*p - '0');
+        p++;
+    }
+
+    val *= sign;
+
+    // Проверяем диапазон int
     if (val < -2147483647LL - 1 || val > 2147483647LL) return 0;
+
     *rez = (int)val;
     return 1;
 }
@@ -257,7 +276,7 @@ int pars_decimal(const char* str, int* rez) {
     int has_decimal_point = 0;
 
     // Парсим целую часть
-    while (*str && isdigit(*str)) {
+    while (*str && isdigit((unsigned char)*str)) {
         // Проверка на переполнение на лету
         if (int_part > 999) return 0; // Больше 3 цифр
         int_part = int_part * 10 + (*str - '0');
@@ -273,13 +292,13 @@ int pars_decimal(const char* str, int* rez) {
         has_decimal_point = 1;
         str++;
         // Считываем до двух цифр дробной части
-        while (*str && isdigit(*str) && frac_digits < 2) {
+        while (*str && isdigit((unsigned char)*str) && frac_digits < 2) {
             frac_part = frac_part * 10 + (*str - '0');
             frac_digits++;
             str++;
         }
         // Если после дробной части есть еще цифры (больше двух) - ошибка
-        if (*str && isdigit(*str)) return 0;
+        if (*str && isdigit((unsigned char)*str)) return 0;
     }
 
     // Проверяем, что после числа нет мусора
@@ -423,7 +442,7 @@ int is_value_in_list(const char* list_str, const char* value) {
 
 typedef struct Condition {
     char field_name[50];
-    char operator[10];
+    char oper[10];
     char value_str[256];
 } Condition;
 
@@ -457,19 +476,19 @@ int parse_condition(const char* str, Condition* cond) {
     char* val_start = NULL;
 
     if (strncmp(op, "<=", 2) == 0) {
-        strcpy(cond->operator, "<=");
+        strcpy(cond->oper, "<=");
         val_start = op + 2;
     }
     else if (strncmp(op, ">=", 2) == 0) {
-        strcpy(cond->operator, ">=");
+        strcpy(cond->oper, ">=");
         val_start = op + 2;
     }
     else if (strncmp(op, "!=", 2) == 0) {
-        strcpy(cond->operator, "!=");
+        strcpy(cond->oper, "!=");
         val_start = op + 2;
     }
     else if (strncmp(op, "==", 2) == 0) {
-        strcpy(cond->operator, "=");
+        strcpy(cond->oper, "=");
         val_start = op + 2;
     }
     else if (*op == '/') {
@@ -480,20 +499,20 @@ int parse_condition(const char* str, Condition* cond) {
             return 0;
         }
         *slash = '\0';
-        strcpy(cond->operator, op);
+        strcpy(cond->oper, op);
         val_start = slash + 1;
     }
     else {
         if (*op == '=') {
-            strcpy(cond->operator, "=");
+            strcpy(cond->oper, "=");
             val_start = op + 1;
         }
         else if (*op == '<') {
-            strcpy(cond->operator, "<");
+            strcpy(cond->oper, "<");
             val_start = op + 1;
         }
         else if (*op == '>') {
-            strcpy(cond->operator, ">");
+            strcpy(cond->oper, ">");
             val_start = op + 1;
         }
         else {
@@ -518,12 +537,12 @@ int check_condition(Process* proc, Condition* cond) {
         int val;
         if (!diapozon_int(cond->value_str, &val)) return 0;
         int cmp = compare_int(proc->pid, val);
-        if (strcmp(cond->operator, "=") == 0) return cmp == 0;
-        if (strcmp(cond->operator, "!=") == 0) return cmp != 0;
-        if (strcmp(cond->operator, "<") == 0) return cmp < 0;
-        if (strcmp(cond->operator, ">") == 0) return cmp > 0;
-        if (strcmp(cond->operator, "<=") == 0) return cmp <= 0;
-        if (strcmp(cond->operator, ">=") == 0) return cmp >= 0;
+        if (strcmp(cond->oper, "=") == 0) return cmp == 0;
+        if (strcmp(cond->oper, "!=") == 0) return cmp != 0;
+        if (strcmp(cond->oper, "<") == 0) return cmp < 0;
+        if (strcmp(cond->oper, ">") == 0) return cmp > 0;
+        if (strcmp(cond->oper, "<=") == 0) return cmp <= 0;
+        if (strcmp(cond->oper, ">=") == 0) return cmp >= 0;
         return 0;
     }
 
@@ -533,12 +552,12 @@ int check_condition(Process* proc, Condition* cond) {
         if (!proc->name) { my_free(val); return 0; }
         int cmp = compare_str(proc->name, val);
         my_free(val);
-        if (strcmp(cond->operator, "=") == 0) return cmp == 0;
-        if (strcmp(cond->operator, "!=") == 0) return cmp != 0;
-        if (strcmp(cond->operator, "<") == 0) return cmp < 0;
-        if (strcmp(cond->operator, ">") == 0) return cmp > 0;
-        if (strcmp(cond->operator, "<=") == 0) return cmp <= 0;
-        if (strcmp(cond->operator, ">=") == 0) return cmp >= 0;
+        if (strcmp(cond->oper, "=") == 0) return cmp == 0;
+        if (strcmp(cond->oper, "!=") == 0) return cmp != 0;
+        if (strcmp(cond->oper, "<") == 0) return cmp < 0;
+        if (strcmp(cond->oper, ">") == 0) return cmp > 0;
+        if (strcmp(cond->oper, "<=") == 0) return cmp <= 0;
+        if (strcmp(cond->oper, ">=") == 0) return cmp >= 0;
         return 0;
     }
 
@@ -546,12 +565,12 @@ int check_condition(Process* proc, Condition* cond) {
         int val;
         if (!diapozon_int(cond->value_str, &val)) return 0;
         int cmp = compare_int(proc->priority, val);
-        if (strcmp(cond->operator, "=") == 0) return cmp == 0;
-        if (strcmp(cond->operator, "!=") == 0) return cmp != 0;
-        if (strcmp(cond->operator, "<") == 0) return cmp < 0;
-        if (strcmp(cond->operator, ">") == 0) return cmp > 0;
-        if (strcmp(cond->operator, "<=") == 0) return cmp <= 0;
-        if (strcmp(cond->operator, ">=") == 0) return cmp >= 0;
+        if (strcmp(cond->oper, "=") == 0) return cmp == 0;
+        if (strcmp(cond->oper, "!=") == 0) return cmp != 0;
+        if (strcmp(cond->oper, "<") == 0) return cmp < 0;
+        if (strcmp(cond->oper, ">") == 0) return cmp > 0;
+        if (strcmp(cond->oper, "<=") == 0) return cmp <= 0;
+        if (strcmp(cond->oper, ">=") == 0) return cmp >= 0;
         return 0;
     }
 
@@ -559,12 +578,12 @@ int check_condition(Process* proc, Condition* cond) {
         Time val;
         if (!pars_time(cond->value_str, &val)) return 0;
         int cmp = compare_time(proc->kern_tm, val);
-        if (strcmp(cond->operator, "=") == 0) return cmp == 0;
-        if (strcmp(cond->operator, "!=") == 0) return cmp != 0;
-        if (strcmp(cond->operator, "<") == 0) return cmp < 0;
-        if (strcmp(cond->operator, ">") == 0) return cmp > 0;
-        if (strcmp(cond->operator, "<=") == 0) return cmp <= 0;
-        if (strcmp(cond->operator, ">=") == 0) return cmp >= 0;
+        if (strcmp(cond->oper, "=") == 0) return cmp == 0;
+        if (strcmp(cond->oper, "!=") == 0) return cmp != 0;
+        if (strcmp(cond->oper, "<") == 0) return cmp < 0;
+        if (strcmp(cond->oper, ">") == 0) return cmp > 0;
+        if (strcmp(cond->oper, "<=") == 0) return cmp <= 0;
+        if (strcmp(cond->oper, ">=") == 0) return cmp >= 0;
         return 0;
     }
 
@@ -572,12 +591,12 @@ int check_condition(Process* proc, Condition* cond) {
         Time val;
         if (!pars_time(cond->value_str, &val)) return 0;
         int cmp = compare_time(proc->file_tm, val);
-        if (strcmp(cond->operator, "=") == 0) return cmp == 0;
-        if (strcmp(cond->operator, "!=") == 0) return cmp != 0;
-        if (strcmp(cond->operator, "<") == 0) return cmp < 0;
-        if (strcmp(cond->operator, ">") == 0) return cmp > 0;
-        if (strcmp(cond->operator, "<=") == 0) return cmp <= 0;
-        if (strcmp(cond->operator, ">=") == 0) return cmp >= 0;
+        if (strcmp(cond->oper, "=") == 0) return cmp == 0;
+        if (strcmp(cond->oper, "!=") == 0) return cmp != 0;
+        if (strcmp(cond->oper, "<") == 0) return cmp < 0;
+        if (strcmp(cond->oper, ">") == 0) return cmp > 0;
+        if (strcmp(cond->oper, "<=") == 0) return cmp <= 0;
+        if (strcmp(cond->oper, ">=") == 0) return cmp >= 0;
         return 0;
     }
 
@@ -585,26 +604,26 @@ int check_condition(Process* proc, Condition* cond) {
         int val;
         if (!pars_decimal(cond->value_str, &val)) return 0;
         int cmp = compare_decimal(proc->cpu_usage, val);
-        if (strcmp(cond->operator, "=") == 0) return cmp == 0;
-        if (strcmp(cond->operator, "!=") == 0) return cmp != 0;
-        if (strcmp(cond->operator, "<") == 0) return cmp < 0;
-        if (strcmp(cond->operator, ">") == 0) return cmp > 0;
-        if (strcmp(cond->operator, "<=") == 0) return cmp <= 0;
-        if (strcmp(cond->operator, ">=") == 0) return cmp >= 0;
+        if (strcmp(cond->oper, "=") == 0) return cmp == 0;
+        if (strcmp(cond->oper, "!=") == 0) return cmp != 0;
+        if (strcmp(cond->oper, "<") == 0) return cmp < 0;
+        if (strcmp(cond->oper, ">") == 0) return cmp > 0;
+        if (strcmp(cond->oper, "<=") == 0) return cmp <= 0;
+        if (strcmp(cond->oper, ">=") == 0) return cmp >= 0;
         return 0;
     }
 
     if (strcmp(cond->field_name, "status") == 0) {
-        if (strcmp(cond->operator, "in") == 0) {
+        if (strcmp(cond->oper, "in") == 0) {
             return is_value_in_list(cond->value_str, status_names[proc->status]);
         }
-        if (strcmp(cond->operator, "not_in") == 0) {
+        if (strcmp(cond->oper, "not_in") == 0) {
             return !is_value_in_list(cond->value_str, status_names[proc->status]);
         }
         Status val;
         if (!pars_status(cond->value_str, &val)) return 0;
-        if (strcmp(cond->operator, "=") == 0) return proc->status == val;
-        if (strcmp(cond->operator, "!=") == 0) return proc->status != val;
+        if (strcmp(cond->oper, "=") == 0) return proc->status == val;
+        if (strcmp(cond->oper, "!=") == 0) return proc->status != val;
         return 0;
     }
 
@@ -848,7 +867,7 @@ void select_cmd(const char* args, const char* full_command, FILE* output) {
     char* fields_str = args_copy;
     while (*fields_str == ' ' || *fields_str == '\t') fields_str++;
     char* end = fields_str;
-    while (*end && !isspace(*end)) end++;
+    while (*end && !isspace((unsigned char)*end)) end++;
 
     if (end == fields_str) {
         my_free(args_copy);
@@ -1070,7 +1089,7 @@ void update_cmd(const char* args, const char* full_command, FILE* output) {
     while (*p == ' ' || *p == '\t') p++;
 
     char* end = p;
-    while (*end && !isspace(*end)) end++;
+    while (*end && !isspace((unsigned char)*end)) end++;
 
     if (end == p) {
         my_free(args_copy);
@@ -1559,7 +1578,7 @@ int main() {
 
             // ИСПРАВЛЕНО: явное приведение для предупреждения C4267
             size_t len = strlen(line);
-            while (len > 0 && isspace(line[len - 1])) {
+            while (len > 0 && isspace((unsigned char)line[len - 1])) {
                 line[len - 1] = '\0';
                 len--;
             }
@@ -1577,7 +1596,7 @@ int main() {
             }
 
             char* args = line;
-            while (*args && !isspace(*args)) args++;
+            while (*args && !isspace((unsigned char)*args)) args++;
             while (*args == ' ' || *args == '\t') args++;
 
             if (strcmp(cmd, "insert") == 0) {
@@ -1608,6 +1627,7 @@ int main() {
     }
 
     fclose(output);
+    clear_allproc();
 
     FILE* memstat = fopen("memstat.txt", "w");
     if (memstat) {
@@ -1618,7 +1638,7 @@ int main() {
         fclose(memstat);
     }
 
-    clear_allproc();
+    
 
     return 0;
 }
